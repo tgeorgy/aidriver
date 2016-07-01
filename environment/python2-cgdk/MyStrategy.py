@@ -16,6 +16,7 @@ class MyStrategy:
     pixel_per_tile = 80
     save_map_every = 50
     img_acc = 0
+    score_ = 0
 
     def init_map(self, world, game):
         tile_size = float(game.track_tile_size)
@@ -148,24 +149,79 @@ class MyStrategy:
         pre_state = np.concatenate((self.map[:,:,np.newaxis],
                                 direction_map[:,:,np.newaxis]), axis=2)
 
-        tr_M = cv2.getRotationMatrix2D((self.x_,self.y_),-alpha/np.pi*180+180,1)
+        transform_mat = cv2.getRotationMatrix2D((self.x_,self.y_),-alpha/np.pi*180+180,1)
 
-        tr_M[0,2] += cols/2-self.x_ # Adding offsets to hold car position in a center
-        tr_M[1,2] += rows/2-self.y_
+        transform_mat[0,2] += cols/2-self.x_ # Adding offsets to hold car position in a center
+        transform_mat[1,2] += rows/2-self.y_
 
-        state = cv2.warpAffine(pre_state, tr_M, (cols,rows),
+        state = cv2.warpAffine(pre_state, transform_mat, (cols,rows),
             flags=0) # flags = 0 for CV_INTER_NN
 
         state = np.concatenate((state,self.car_img), axis=2)
         state = state[:-rows/4,cols/8:-cols/8,:]
 
+        player = world.get_my_player()
+        if self.score_ != player.score:
+            reward = player.score - self.score_
+        else:
+            reward = -1
+
         #if world.tick % self.save_map_every == 0:
         #    pyplot.imsave('map_'+str(world.tick)+'.png', state)
-
         #resp = requests.post('http://127.0.0.1:5010',data='test=1').json()
         #move.engine_power = resp['engine']
 
-        move.engine_power = 1.0
+        if resp['action'] == 0:
+            # No action
+            move.engine_power = 0.
+            move.wheel_turn = 0.
+        elif resp['action'] == 1:
+            # Forward
+            move.engine_power = 1.
+            move.wheel_turn = 0.
+        elif resp['action'] == 2:
+            # Right
+            move.engine_power = 0.
+            move.wheel_turn = 1.
+        elif resp['action'] == 3:
+            # Left
+            move.engine_power = 0.
+            move.wheel_turn = -1.
+        elif resp['action'] == 4:
+            # Back
+            move.engine_power = -1.
+            move.wheel_turn = 0.
+        elif resp['action'] == 5:
+            # Brake
+            move.brake = True
+            move.engine_power = 0.
+            move.wheel_turn = 0.
+        elif resp['action'] == 6:
+            # Forward + Right
+            move.engine_power = 1.
+            move.wheel_turn = 1.
+        elif resp['action'] == 7:
+            # Forward + Left
+            move.engine_power = 1.
+            move.wheel_turn = -1.
+        elif resp['action'] == 8:
+            # Back + Right
+            move.engine_power = -1.
+            move.wheel_turn = 1.
+        elif resp['action'] == 9:
+            # Back + Left
+            move.engine_power = -1.
+            move.wheel_turn = -1.
+        elif resp['action'] == 10:
+            # Brake + Right
+            move.brake = True
+            move.engine_power = 0.
+            move.wheel_turn = 0.
+        elif resp['action'] == 11:
+            # Brake + Left
+            move.brake = True
+            move.engine_power = 0.
+            move.wheel_turn = 0.
 
         """
         move.engine_power = 1.0
