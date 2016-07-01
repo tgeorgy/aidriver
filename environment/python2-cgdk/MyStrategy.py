@@ -8,6 +8,7 @@ import numpy as np
 import cv2
 import requests
 from matplotlib import pyplot
+import time
 
 class MyStrategy:
     map = []
@@ -94,7 +95,7 @@ class MyStrategy:
 
         return map
 
-    def get_direction(self, me, world, game, n_next_pnt=3):
+    def get_direction(self, map, me, world, game, n_next_pnt=3):
         size = self.pixel_per_tile
 
         start = me.next_waypoint_index
@@ -105,14 +106,12 @@ class MyStrategy:
             y_ = int(size*(y+0.5))
             next_pnt_pos.append((x_,y_))
 
-        direction_map = np.zeros(self.map.shape, dtype=np.int8)
-
         prev_pnt = (int(self.x_),int(self.y_))
         for i, pnt in enumerate(next_pnt_pos):
-            cv2.line(direction_map, prev_pnt, pnt, len(next_pnt_pos)-i)
+            cv2.line(map, prev_pnt, pnt, 2)
             prev_pnt = pnt
 
-        return direction_map
+        return map
 
     def move(self, me, world, game, move):
         """
@@ -121,7 +120,6 @@ class MyStrategy:
         @type game: Game
         @type move: Move
         """
-
         if world.tick == 0:
             self.map = self.init_map(world, game)
             rows,cols = self.map.shape[:2]
@@ -133,9 +131,8 @@ class MyStrategy:
             d2 = (rows/2-w/2, cols/2-h/2)
             d1 = tuple(np.int32(np.round(d1)))
             d2 = tuple(np.int32(np.round(d2)))
-            self.car_img = np.zeros((rows,cols,1))
             # thickness=-1 for filled rect
-            cv2.rectangle(self.car_img, d1, d2, 1, thickness=-1)
+            self.draw_car = lambda m: cv2.rectangle(m, d1, d2, 3, thickness=-1)
         else:
             rows,cols = self.map.shape[:2]
 
@@ -144,21 +141,17 @@ class MyStrategy:
 
         alpha = np.pi/2-me.angle
 
-        direction_map = self.get_direction(me, world, game)
-
-        pre_state = np.concatenate((self.map[:,:,np.newaxis],
-                                direction_map[:,:,np.newaxis]), axis=2)
+        map = self.map.__copy__()
+        map = self.get_direction(map, me, world, game)
 
         transform_mat = cv2.getRotationMatrix2D((self.x_,self.y_),-alpha/np.pi*180+180,1)
-
         transform_mat[0,2] += cols/2-self.x_ # Adding offsets to hold car position in a center
         transform_mat[1,2] += rows/2-self.y_
 
-        state = cv2.warpAffine(pre_state, transform_mat, (cols,rows),
-            flags=0) # flags = 0 for CV_INTER_NN
-
-        state = np.concatenate((state,self.car_img), axis=2)
-        state = state[:-rows/4,cols/8:-cols/8,:]
+        state = cv2.warpAffine(map, transform_mat, (cols,rows),
+            flags=0, borderValue=1) # flags = 0 for CV_INTER_NN
+        self.draw_car(state)
+        state = state[:-rows/4,cols/8:-cols/8]
 
         player = world.get_my_player()
         if self.score_ != player.score:
@@ -170,6 +163,8 @@ class MyStrategy:
         #    pyplot.imsave('map_'+str(world.tick)+'.png', state)
         #resp = requests.post('http://127.0.0.1:5010',data='test=1').json()
         #move.engine_power = resp['engine']
+
+        resp = {'action':6}
 
         if resp['action'] == 0:
             # No action
