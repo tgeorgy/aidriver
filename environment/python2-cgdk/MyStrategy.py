@@ -18,6 +18,7 @@ class MyStrategy:
     save_map_every = 50
     img_acc = 0
     score_ = 0
+    finished = False
 
     def init_map(self, world, game):
         tile_size = float(game.track_tile_size)
@@ -136,6 +137,9 @@ class MyStrategy:
         else:
             rows,cols = self.map.shape[:2]
 
+        if world.tick < game.initial_freeze_duration_ticks or self.finished:
+            return
+
         self.x_ = me.x*self.pixel_per_tile/game.track_tile_size
         self.y_ = me.y*self.pixel_per_tile/game.track_tile_size
 
@@ -162,14 +166,27 @@ class MyStrategy:
         # Save data transfer costs (check later)
         #state = np.uint8(state).reshape(-1)
         #n = len(state)
-        #state = state[:n/4]+state[n/4:n/2]*4+state[n/2:3*n/4]*16+state[3*n/4:]*64
+        #state = (state[:n/4] + state[n/4:n/2]*4 +
+        #         state[n/2:3*n/4]*16 + state[3*n/4:]*64)
+
+        if me.finished_track or world.tick == game.tick_count-1:
+            terminate_s = 1
+            self.finished = True
+        else:
+            terminate_s = 0
+
+        state_s = state.tostring()
+        reward_s = np.int32(reward).tostring()
+        terminate_s = np.int8(terminate).tostring()
 
         #if world.tick % self.save_map_every == 0:
         #    pyplot.imsave('map_'+str(world.tick)+'.png', state)
-        #resp = requests.post('http://127.0.0.1:5010',data='test=1').json()
-        #move.engine_power = resp['engine']
 
-        resp = {'action':6}
+        headers = {'content-type':'application/json'}
+        resp = requests.post('http://127.0.0.1:5010',
+                             data=terminate_s+reward_s+state_s,
+                             headers=headers).json()
+        #resp = {'action':6}
 
         if resp['action'] == 0:
             # No action
