@@ -159,6 +159,11 @@ class MyStrategy:
         else:
             reward = -1
 
+        # Save data transfer costs (check later)
+        #state = np.uint8(state).reshape(-1)
+        #n = len(state)
+        #state = state[:n/4]+state[n/4:n/2]*4+state[n/2:3*n/4]*16+state[3*n/4:]*64
+
         #if world.tick % self.save_map_every == 0:
         #    pyplot.imsave('map_'+str(world.tick)+'.png', state)
         #resp = requests.post('http://127.0.0.1:5010',data='test=1').json()
