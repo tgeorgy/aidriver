@@ -170,10 +170,10 @@ class MyStrategy:
         #         state[n/2:3*n/4]*16 + state[3*n/4:]*64)
 
         if me.finished_track or world.tick == game.tick_count-1:
-            terminate_s = 1
+            terminate = 1
             self.finished = True
         else:
-            terminate_s = 0
+            terminate = 0
 
         state_s = state.tostring()
         reward_s = np.int32(reward).tostring()
