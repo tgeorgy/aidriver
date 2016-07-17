@@ -1,4 +1,4 @@
-local DataBuffer = torch.class('DataBuffer')
+local DataBuffer = torch.class('agent.DataBuffer')
 
 function DataBuffer:__init(buf_len, dims, sample_len)
     self.buf_len = buf_len or 1000000
@@ -6,7 +6,7 @@ function DataBuffer:__init(buf_len, dims, sample_len)
     self.sample_len = sample_len or 10
 
     self.buf_s = torch.ByteTensor(self.buf_len, self.dims[1], self.dims[2])
-    self.buf_t = torch.ByteTensor(self.buf_len)
+    self.buf_t = torch.ByteTensor(self.buf_len):fill(1)
     self.buf_r = torch.LongTensor(self.buf_len)
     self.buf_a = torch.ByteTensor(self.buf_len)
 
@@ -47,18 +47,18 @@ function DataBuffer:tail(s)
     local tail, tail_id
     tail_id = self.last_id
 
-    tail = torch.ByteTensor(1, db.sample_len, self.dims[1], self.dims[2])
+    tail = torch.ByteTensor(1, self.sample_len, self.dims[1], self.dims[2])
 
     if self.buf_t[tail_id] == 1 then
 
-        for i  = 1,db.sample_len do
+        for i  = 1,self.sample_len do
             tail[{1,i}] = s
         end
 
     else
 
         tail[{1,1}] = s
-        for i  = 2,db.sample_len do
+        for i  = 2,self.sample_len do
             tail[{1,i}] = self.buf_s[tail_id]
             tail_id = (tail_id - 2 + self.buf_len) % self.buf_len + 1
             tail_id = tail_id + self.buf_t[tail_id]
@@ -72,8 +72,8 @@ end
 function DataBuffer:pop_tail(s)
     local tail
 
-    tail = torch.ByteTensor(1, db.sample_len-1, self.dims[1], self.dims[2])
-    for i  = 1,db.sample_len-1 do
+    tail = torch.ByteTensor(1, self.sample_len-1, self.dims[1], self.dims[2])
+    for i  = 1,self.sample_len-1 do
         tail[{1,i}] = self.buf_s[tail_id]
         tail_id = (tail_id - 2 + self.buf_len) % self.buf_len + 1
         tail_id = tail_id + self.buf_t[tail_id]
@@ -111,7 +111,9 @@ function DataBuffer:sample(n, replacement, include_last)
     s2_ids = (s1_ids:clone() % self.buf_len) + 1
 
 
-    local s1,s2,a,r,t,t1,t2
+    local s1,a,r,s2,t
+    local t1,t2
+
     s1 = torch.ByteTensor(n, self.sample_len, self.dims[1], self.dims[2])
     s2 = torch.ByteTensor(n, self.sample_len, self.dims[1], self.dims[2])
 
@@ -130,10 +132,10 @@ function DataBuffer:sample(n, replacement, include_last)
         t1 = self.buf_t:index(1, s1_ids)
         t2 = self.buf_t:index(1, s2_ids)
 
-        s1_ids = s1_ids + t1:long()
-        s2_ids = s2_ids + t2:long()
+        s1_ids = s1_ids % agent_.dataBuffer.buf_len + t1:long()
+        s2_ids = s2_ids % agent_.dataBuffer.buf_len + t2:long()
     end
 
-    return a,r,t,s1,s2
+    return s1,a,r,s2,t
 end
 
