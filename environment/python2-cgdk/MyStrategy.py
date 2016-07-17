@@ -14,7 +14,7 @@ class MyStrategy:
     map = []
     x_ = 0
     y_ = 0
-    pixel_per_tile = 80
+    pixel_per_tile = 20
     save_map_every = 50
     img_acc = 0
     score_ = 0
@@ -182,6 +182,8 @@ class MyStrategy:
         #if world.tick % self.save_map_every == 0:
         #    pyplot.imsave('map_'+str(world.tick)+'.png', state)
 
+        #with open('out.txt', 'w') as logfile:
+        #    logfile.write(terminate_s+reward_s+state_s)
         headers = {'content-type':'application/json'}
         resp = requests.post('http://127.0.0.1:5010',
                              data=terminate_s+reward_s+state_s,
