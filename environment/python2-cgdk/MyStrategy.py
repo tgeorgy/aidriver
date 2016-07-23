@@ -11,14 +11,19 @@ from matplotlib import pyplot
 import time
 
 class MyStrategy:
-    map = []
+    map_ = []
     x_ = 0
     y_ = 0
     pixel_per_tile = 20
     save_map_every = 50
+    pass_every = 5
+
     img_acc = 0
-    score_ = 0
+    nwpi = 1
     finished = False
+    action_ = 0
+    dist_ = 0
+    health_ = 1.0
 
     def init_map(self, world, game):
         tile_size = float(game.track_tile_size)
@@ -86,17 +91,17 @@ class MyStrategy:
             9:np.rot90(T,2),    10:T,               11:X
         }
 
-        map = np.zeros((world.height*pixel_per_tile,
+        map_ = np.zeros((world.height*pixel_per_tile,
                     world.width*pixel_per_tile),dtype=np.int8)
 
         for i,col in enumerate(world.tiles_x_y):
             for j,tile in enumerate(col):
-                map[j*pixel_per_tile:(j+1)*pixel_per_tile,
+                map_[j*pixel_per_tile:(j+1)*pixel_per_tile,
                     i*pixel_per_tile:(i+1)*pixel_per_tile] = tile_dict[tile]
 
-        return map
+        return map_
 
-    def get_direction(self, map, me, world, game, n_next_pnt=3):
+    def get_direction(self, map_, me, world, game, n_next_pnt=3):
         size = self.pixel_per_tile
 
         start = me.next_waypoint_index
@@ -109,10 +114,10 @@ class MyStrategy:
 
         prev_pnt = (int(self.x_),int(self.y_))
         for i, pnt in enumerate(next_pnt_pos):
-            cv2.line(map, prev_pnt, pnt, 2)
+            cv2.line(map_, prev_pnt, pnt, 2)
             prev_pnt = pnt
 
-        return map
+        return map_
 
     def move(self, me, world, game, move):
         """
@@ -122,8 +127,8 @@ class MyStrategy:
         @type move: Move
         """
         if world.tick == 0:
-            self.map = self.init_map(world, game)
-            rows,cols = self.map.shape[:2]
+            self.map_ = self.init_map(world, game)
+            rows,cols = self.map_.shape[:2]
 
             # opposite notation high x width
             h = me.width*self.pixel_per_tile/game.track_tile_size
@@ -135,108 +140,129 @@ class MyStrategy:
             # thickness=-1 for filled rect
             self.draw_car = lambda m: cv2.rectangle(m, d1, d2, 3, thickness=-1)
         else:
-            rows,cols = self.map.shape[:2]
+            rows,cols = self.map_.shape[:2]
 
         if world.tick < game.initial_freeze_duration_ticks or self.finished:
+
             return
+        elif (world.tick % self.pass_every == 0 or
+                me.finished_track or 
+                world.tick == game.tick_count-1):
 
-        self.x_ = me.x*self.pixel_per_tile/game.track_tile_size
-        self.y_ = me.y*self.pixel_per_tile/game.track_tile_size
+            self.x_ = me.x*self.pixel_per_tile/game.track_tile_size
+            self.y_ = me.y*self.pixel_per_tile/game.track_tile_size
 
-        alpha = np.pi/2-me.angle
+            alpha = np.pi/2-me.angle
 
-        map = self.map.__copy__()
-        map = self.get_direction(map, me, world, game)
+            map_ = self.map_.__copy__()
+            map_ = self.get_direction(map_, me, world, game)
 
-        transform_mat = cv2.getRotationMatrix2D((self.x_,self.y_),-alpha/np.pi*180+180,1)
-        transform_mat[0,2] += cols/2-self.x_ # Adding offsets to hold car position in a center
-        transform_mat[1,2] += rows/2-self.y_
+            transform_mat = cv2.getRotationMatrix2D((self.x_,self.y_),-alpha/np.pi*180+180,1)
+            transform_mat[0,2] += cols/2-self.x_ # Adding offsets to hold car position in a center
+            transform_mat[1,2] += rows/2-self.y_
 
-        state = cv2.warpAffine(map, transform_mat, (cols,rows),
-            flags=0, borderValue=1) # flags = 0 for CV_INTER_NN
-        self.draw_car(state)
-        state = state[:-rows/4,cols/8:-cols/8]
+            state = cv2.warpAffine(map_, transform_mat, (cols,rows),
+                flags=0, borderValue=1) # flags = 0 for CV_INTER_NN
+            self.draw_car(state)
+            state = state[:-rows/4,cols/8:-cols/8]
 
-        player = world.get_my_player()
-        if self.score_ != player.score:
-            reward = player.score - self.score_
-        else:
-            reward = -1
+            player = world.get_my_player()
+            if self.nwpi != me.next_waypoint_index:
+                reward = 200
+                self.nwpi = me.next_waypoint_index
+            else:
+                reward = -10
 
-        # Save data transfer costs (check later)
-        #state = np.uint8(state).reshape(-1)
-        #n = len(state)
-        #state = (state[:n/4] + state[n/4:n/2]*4 +
-        #         state[n/2:3*n/4]*16 + state[3*n/4:]*64)
+            nwpx = (me.next_waypoint_x + 0.5) * game.track_tile_size
+            nwpy = (me.next_waypoint_y + 0.5) * game.track_tile_size
+            dist = me.get_distance_to(nwpx, nwpy)
+            if dist < self.dist_-5:
+                #reward += (self.dist_ - dist) / game.track_tile_size
+                #reward += 5
+                reward_add = (self.dist_ - dist) / 10.
+                reward_add = min(reward_add, 1)
+                reward += int(reward_add)
+            if self.health_ > me.durability:
+                reward = reward-2
+            self.health_ = me.durability
 
-        if me.finished_track or world.tick == game.tick_count-1:
-            terminate = 1
-            self.finished = True
-        else:
-            terminate = 0
+            self.dist_ = dist
 
-        state_s = state.tostring()
-        reward_s = np.int32(reward).tostring()
-        terminate_s = np.int8(terminate).tostring()
+            # Save data transfer costs (check later)
+            #state = np.uint8(state).reshape(-1)
+            #n = len(state)
+            #state = (state[:n/4] + state[n/4:n/2]*4 +
+            #         state[n/2:3*n/4]*16 + state[3*n/4:]*64)
 
-        #if world.tick % self.save_map_every == 0:
-        #    pyplot.imsave('map_'+str(world.tick)+'.png', state)
+            if me.finished_track or world.tick == game.tick_count-1:
+                terminate = 1
+                self.finished = True
+            else:
+                terminate = 0
 
-        #with open('out.txt', 'w') as logfile:
-        #    logfile.write(terminate_s+reward_s+state_s)
-        headers = {'content-type':'application/json'}
-        resp = requests.post('http://127.0.0.1:5010',
-                             data=terminate_s+reward_s+state_s,
-                             headers=headers).json()
-        #resp = {'action':6}
+            state_s = state.tostring()
+            reward_s = np.int32(reward).tostring()
+            terminate_s = np.int8(terminate).tostring()
 
-        if resp['action'] == 0:
+            #if world.tick % self.save_map_every == 0:
+            #    pyplot.imsave('map_'+str(world.tick)+'.png', state)
+
+            #with open('out.txt', 'w') as logfile:
+            #    logfile.write(terminate_s+reward_s+state_s)
+            headers = {'content-type':'application/json'}
+            resp = requests.post('http://127.0.0.1:5010',
+                                 data=terminate_s+reward_s+state_s,
+                                 headers=headers).json()
+            #resp = {'action':6}
+            self.action_ = resp['action']
+
+        if self.action_ == 0:
             # No action
             move.engine_power = 0.
             move.wheel_turn = 0.
-        elif resp['action'] == 1:
+        elif self.action_ == 1:
             # Forward
             move.engine_power = 1.
             move.wheel_turn = 0.
-        elif resp['action'] == 2:
+        elif self.action_ == 2:
             # Right
             move.engine_power = 0.
             move.wheel_turn = 1.
-        elif resp['action'] == 3:
+        elif self.action_ == 3:
             # Left
             move.engine_power = 0.
             move.wheel_turn = -1.
-        elif resp['action'] == 4:
+        elif self.action_ == 4:
             # Back
             move.engine_power = -1.
             move.wheel_turn = 0.
-        elif resp['action'] == 5:
+        elif self.action_ == 5:
             # Brake
             move.brake = True
             move.engine_power = 0.
             move.wheel_turn = 0.
-        elif resp['action'] == 6:
+        elif self.action_ == 6:
             # Forward + Right
             move.engine_power = 1.
             move.wheel_turn = 1.
-        elif resp['action'] == 7:
+        elif self.action_ == 7:
             # Forward + Left
             move.engine_power = 1.
             move.wheel_turn = -1.
-        elif resp['action'] == 8:
+        elif self.action_ == 8:
             # Back + Right
             move.engine_power = -1.
             move.wheel_turn = 1.
-        elif resp['action'] == 9:
+        elif self.action_ == 9:
             # Back + Left
             move.engine_power = -1.
             move.wheel_turn = -1.
-        elif resp['action'] == 10:
+        elif self.action_ == 10:
             # Brake + Right
             move.brake = True
             move.engine_power = 0.
             move.wheel_turn = 0.
-        elif resp['action'] == 11:
+        elif self.action_ == 11:
             # Brake + Left
             move.brake = True
             move.engine_power = 0.
