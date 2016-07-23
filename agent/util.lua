@@ -49,5 +49,5 @@ function process_input(istr, dims)
     state_byte_storage = read_state(string.sub(istr,6,#istr))
     state = torch.ByteTensor(state_byte_storage, 1, torch.LongStorage(dims))
 
-    return terminate, reward, state
+    return reward, terminate, state
 end
