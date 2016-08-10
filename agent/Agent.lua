@@ -15,26 +15,25 @@ function Agent:__init(model_dir, arg)
     -- init agent parameters
     arg = arg or {}
     self.buf_len    = arg.buf_len or 1000000
-    self.dims       = arg.dims or {120,120}
+    self.dims       = arg.dims or {40,40}
     self.sample_len = arg.sample_len or 10
-    self.batch_size = arg.batch_size or 64
+    self.batch_size = arg.batch_size or 32
 
     self.discount = arg.discount or 0.99
-    self.lr       = arg.lr or 0.0001
-    self.epsilon_start = arg.epsilon_start or 0.2
-    self.epsilon_end   = arg.epsilon_end or 0.01
-    self.epsilon_step  = arg.epsilon_step or 0.0001
-    self.epsilon = self.epsilon_start
+    self.lr       = arg.lr or 0.001
+    self.epsilon_start = arg.epsilon_start or 0.5
+    self.epsilon_end   = arg.epsilon_end or 0.1
+    self.epsilon_end_t  = arg.epsilon_end_t or 500000
 
-    self.clip_delta = 2
+    self.clip_delta = 1
     self.scale_reward = 0.1
 
     self.nactions = arg.nactions or 12
 
     self.gpu = arg.gpu or true
 
-    self.update_target_every  = arg.update_target_every or 5000
-    self.save_agent_every     = arg.save_agent_every or 1000
+    self.update_target_every  = arg.update_target_every or 10000
+    self.save_agent_every     = arg.save_agent_every or 2000
     self.print_every          = arg.print_every or 10
     self.clean_every          = arg.clean_every or 100
     self.start_training_after = arg.start_training_after or self.batch_size + self.sample_len + 10
@@ -76,24 +75,32 @@ end
 
 function Agent:init_qnetwork()
     idat_img = nn.Identity()()
-    ff = nn.SpatialConvolution(self.sample_len, 32, 8, 8, 4, 4)(idat_img)
+    ff_l = nn.SpatialConvolution(self.sample_len, 16, 3, 3, 2, 2)(idat_img)
+    ff_r = nn.SpatialConvolution(self.sample_len, 16, 9, 1, 2, 1, 3, 0)(idat_img)
+    ff_r = nn.SpatialConvolution(16, 16, 1, 9, 1, 2, 0, 3)(ff_r)
+
+    ff = nn.JoinTable(2)({ff_l,ff_r})
     ff = nn.SpatialBatchNormalization(32)(ff)
     ff = nn.ReLU()(ff)
 
-    ff = nn.SpatialConvolution(32, 64, 4, 4, 2, 2)(ff)
+    ff_l = nn.SpatialConvolution(32, 32, 3, 3, 2, 2)(ff)
+    ff_r = nn.SpatialConvolution(32, 32, 9, 1, 2, 1, 3, 0)(ff)
+    ff_r = nn.SpatialConvolution(32, 32, 1, 9, 1, 2, 0, 3)(ff_r)
+
+    ff = nn.JoinTable(2)({ff_l,ff_r})
     ff = nn.SpatialBatchNormalization(64)(ff)
     ff = nn.ReLU()(ff)
 
-    ff = nn.SpatialConvolution(64, 64, 4, 4, 1, 1)(ff)
+    ff_l = nn.SpatialConvolution(64, 32, 3, 3)(ff)
+    ff_r = nn.SpatialConvolution(64, 32, 9, 1, 1, 1, 3, 0)(ff)
+    ff_r = nn.SpatialConvolution(32, 32, 1, 9, 1, 1, 0, 3)(ff_r)
+
+    ff = nn.JoinTable(2)({ff_l,ff_r})
     ff = nn.SpatialBatchNormalization(64)(ff)
     ff = nn.ReLU()(ff)
 
-    ff = nn.SpatialConvolution(64, 64, 3, 3, 1, 1)(ff)
-    ff = nn.SpatialBatchNormalization(64)(ff)
-    ff = nn.ReLU()(ff)
-
-    ff = nn.Reshape(64*8*8)(ff)
-    ff = nn.Linear(64*8*8,512)(ff)
+    ff = nn.Reshape(64*7*7)(ff)
+    ff = nn.Linear(64*7*7,512)(ff)
     ff = nn.ReLU()(ff)
 
     ff = nn.Linear(512,self.nactions)(ff)
@@ -129,9 +136,10 @@ function Agent:train(r,t,s)
     offset = 0
     if self.step > self.start_training_after then
         offset = self:run_minibatch()
-        if self.step % self.update_target_every == 1 and 
+        if self.step % self.update_target_every == 1 and
                 self.step > self.change_target_after then
             self.target_network = self.q_network:clone()
+            self.dataBuffer.buf_p:fill(0.1)
         end
         if self.step % self.save_agent_every == 1 then
             --torch.save(self.agent_file, self)
@@ -163,7 +171,7 @@ end
 
 function Agent:run_minibatch()
     local s1, a, r, s2, t
-    local q2, y, q, err, q2_maxi
+    local q2, y, q, err, q2_maxi, q2_max
     local ai, err_selected, prob_update, _, cost
 
     s1,a,r,s2,t,s1_ids = self.dataBuffer:sample(self.batch_size)
@@ -184,16 +192,18 @@ function Agent:run_minibatch()
 
     -- Double DQL
     -- [http://arxiv.org/pdf/1509.06461v3.pdf]
-    q2 = self.target_network:forward(s2)
-    _,q2_maxi = self.q_network:forward(s2):max(2)
+    q2 = self.target_network:forward(s2/32)
+    _,q2_maxi = self.q_network:forward(s2/32):max(2)
     q2_max = q2:gather(2,q2_maxi)
     --q2_max,_ = q2:max(2)
     q2_max = q2_max:reshape(self.batch_size)
-    q2_max:cmul(1-t) -- zero for terminate state
+    -- Commenting following out because there is nothing indicating
+    -- terminate frame - the game just brakes
+    -- q2_max:cmul(1-t) -- zero for terminate state
     y:add(self.discount, q2_max)
 
     ai = a:reshape(self.batch_size,1)
-    q1 = self.q_network:forward(s1)
+    q1 = self.q_network:forward(s1/32)
     q1_selected = q1:gather(2, ai)
 
     err_selected = q1_selected - y
@@ -227,12 +237,14 @@ end
 
 
 function Agent:egreedy(s)
-    local a
+    local a, epsilon
 
-    if math.random() > self.epsilon then
+    epsilon = self.epsilon_end + (self.epsilon_start - self.epsilon_end)*
+        math.max(0, (self.epsilon_end_t - self.step)/self.epsilon_end_t)
+
+    if math.random() > epsilon then
         a = self:greedy(s)
     else
-        self.epsilon = math.max(self.epsilon_end, self.epsilon-self.epsilon_step)
         a = torch.random(self.nactions)
     end
 
@@ -247,7 +259,7 @@ function Agent:greedy(s)
     if self.gpu then
         s2 = s2:cuda()
     end
-    q = self.q_network:forward(s2)
+    q = self.q_network:forward(s2/32)
     _,a = q:max(2)
 
     return a:byte()[{1,1}]
@@ -280,7 +292,7 @@ function Agent:init_log()
     log_file:writeString('\nlr: ' .. self.lr)
     log_file:writeString('\nepsilon_start: ' .. self.epsilon_start)
     log_file:writeString('\nepsilon_end: ' .. self.epsilon_end)
-    log_file:writeString('\nepsilon_step: ' .. self.epsilon_step)
+    log_file:writeString('\nepsilon_end_t: ' .. self.epsilon_end_t)
     log_file:writeString('\nnactions: ' .. self.nactions)
     log_file:writeString('\ngpu: ' .. tostring(self.gpu))
     log_file:writeString('\nupdate_target_every: ' .. self.update_target_every)
