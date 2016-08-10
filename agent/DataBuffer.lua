@@ -3,7 +3,7 @@ local DataBuffer = torch.class('agent.DataBuffer')
 
 function DataBuffer:__init(buf_len, dims, sample_len)
     self.buf_len = buf_len or 1000000
-    self.dims = dims or torch.LongTensor{480,480}
+    self.dims = dims or torch.LongTensor{40,40}
     self.sample_len = sample_len or 10
 
     self.buf_s = torch.ByteTensor(self.buf_len, self.dims[1], self.dims[2])
@@ -91,7 +91,10 @@ end
 
 function DataBuffer:update_p(err, s1_ids)
     -- Update priority distribution for sampled states
-    self.buf_p:indexCopy(1, s1_ids, err)
+    --self.buf_p:indexCopy(1, s1_ids, err)
+    for i = 1,s1_ids:size(1) do
+        self.buf_p[s1_ids[i]] = err[i]
+    end
 end
 
 
@@ -112,10 +115,9 @@ function DataBuffer:sample(n, replacement, include_last)
     -- [http://arxiv.org/pdf/1511.05952v4.pdf]
     s1_addr_t = torch.LongTensor(self.s1_addr)
     probs = self.buf_p:index(1,s1_addr_t)
-    -- without replacement only
-    sample_ids = torch.multinomial(probs, n, false)
+    sample_ids = torch.multinomial(probs, n, true)
     s1_ids = s1_addr_t:index(1,sample_ids)
-    --[[
+    --[[ Uniform sampling
     if replacement then
         sample_ids = torch.rand(n)
         sample_ids = sample_ids * (#self.s1_addr)
@@ -159,8 +161,8 @@ function DataBuffer:sample(n, replacement, include_last)
         t1 = self.buf_t:index(1, s1_ids)
         t2 = self.buf_t:index(1, s2_ids)
 
-        s1_ids = s1_ids % self.buf_len + t1:long()
-        s2_ids = s2_ids % self.buf_len + t2:long()
+        s1_ids = (s1_ids + t1:long() - 1) % self.buf_len + 1
+        s2_ids = (s2_ids + t2:long() - 1) % self.buf_len + 1
     end
 
     return s1,a,r,s2,t,s1_ids
