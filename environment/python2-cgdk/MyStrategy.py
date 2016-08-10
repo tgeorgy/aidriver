@@ -7,8 +7,8 @@ import numpy as np
 #from scipy.ndimage.interpolation import rotate
 import cv2
 import requests
-from matplotlib import pyplot
-import time
+#from matplotlib import pyplot
+#import time
 
 class MyStrategy:
     map_ = []
@@ -99,12 +99,20 @@ class MyStrategy:
                 map_[j*pixel_per_tile:(j+1)*pixel_per_tile,
                     i*pixel_per_tile:(i+1)*pixel_per_tile] = tile_dict[tile]
 
+        for i in range(map_.shape[0]):
+            for j in range(map_.shape[1]):
+                if (i+j)%10 == 0 and map_[i,j] == 1:
+                    map_[i,j] = 0
+                if (i-j+1)%10 == 0 and map_[i,j] == 1:
+                    map_[i,j] = 0
+
         return map_
 
-    def get_direction(self, map_, me, world, game, n_next_pnt=3):
+    def get_direction(self, map_, me, world, game, n_next_pnt=1):
         size = self.pixel_per_tile
 
         start = me.next_waypoint_index
+        n_next_pnt = min(n_next_pnt, len(world.waypoints)-start)
         next_pnt = [world.waypoints[start+i] for i in range(n_next_pnt)]
         next_pnt_pos = []
         for x,y in next_pnt:
@@ -116,6 +124,13 @@ class MyStrategy:
         for i, pnt in enumerate(next_pnt_pos):
             cv2.line(map_, prev_pnt, pnt, 2)
             prev_pnt = pnt
+
+        # target tile highlight
+        x0 = int(size*(next_pnt[0][0]))
+        y0 = int(size*(next_pnt[0][1]))
+        x1 = int(size*(next_pnt[0][0]+1))
+        y1 = int(size*(next_pnt[0][1]+1))
+        cv2.rectangle(map_, (x0,y0), (x1,y1), 2, thickness=1)
 
         return map_
 
@@ -135,8 +150,8 @@ class MyStrategy:
             w = me.height*self.pixel_per_tile/game.track_tile_size
             d1 = (rows/2+w/2, cols/2+h/2)
             d2 = (rows/2-w/2, cols/2-h/2)
-            d1 = tuple(np.int32(np.round(d1)))
-            d2 = tuple(np.int32(np.round(d2)))
+            d1 = tuple(np.int32(d1))
+            d2 = tuple(np.int32(d2))
             # thickness=-1 for filled rect
             self.draw_car = lambda m: cv2.rectangle(m, d1, d2, 3, thickness=-1)
         else:
@@ -161,17 +176,20 @@ class MyStrategy:
             transform_mat[0,2] += cols/2-self.x_ # Adding offsets to hold car position in a center
             transform_mat[1,2] += rows/2-self.y_
 
-            state = cv2.warpAffine(map_, transform_mat, (cols,rows),
-                flags=0, borderValue=1) # flags = 0 for CV_INTER_NN
+            state = cv2.warpAffine(np.float32(map_), transform_mat, (cols,rows),
+                flags=9, borderValue=1) # flags = 0 for CV_INTER_NN
             self.draw_car(state)
-            state = state[:-rows/4,cols/8:-cols/8]
+            pixel_per_tile = self.pixel_per_tile
+            state = state[rows/2-pixel_per_tile*1.75:rows/2+pixel_per_tile*0.25,
+                          cols/2-pixel_per_tile:cols/2+pixel_per_tile]
+            state = np.uint8(state*32)
 
             player = world.get_my_player()
             if self.nwpi != me.next_waypoint_index:
-                reward = 200
+                reward = 10
                 self.nwpi = me.next_waypoint_index
             else:
-                reward = -10
+                reward = -5
 
             nwpx = (me.next_waypoint_x + 0.5) * game.track_tile_size
             nwpy = (me.next_waypoint_y + 0.5) * game.track_tile_size
@@ -180,7 +198,7 @@ class MyStrategy:
                 #reward += (self.dist_ - dist) / game.track_tile_size
                 #reward += 5
                 reward_add = (self.dist_ - dist) / 10.
-                reward_add = min(reward_add, 1)
+                reward_add = min(reward_add, 10)
                 reward += int(reward_add)
             if self.health_ > me.durability:
                 reward = reward-2
