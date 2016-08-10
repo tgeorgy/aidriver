@@ -7,7 +7,7 @@ require 'util'
 require 'Agent'
 
 agent_instance = agent.Agent()
-dims = {120,120}
+dims = {40,40}
 
 app.post('/', function(req, res)
     r,t,s = process_input(req.body, dims)
